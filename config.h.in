@@ -1,0 +1,20 @@
+/**
+ */
+#define CHESTER_VERSION_MAJOR @CHESTER_VERSION_MAJOR@
+/**
+ */
+#define CHESTER_VERSION_MINOR @CHESTER_VERSION_MINOR@
+
+/**
+ */
+#cmakedefine MODE_DEBUG 1
+/**
+ */
+#cmakedefine MODE_RELEASE 1
+
+/**
+ */
+#define NETWORK_USE_SOCKET 1
+/**
+ */
+/*#define NETWORK_USE_WINSOCK2 1*/
