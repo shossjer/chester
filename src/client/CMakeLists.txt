@@ -18,11 +18,6 @@ add_dependencies(client common)
 target_link_libraries(client common)
 
 # dependencies
-message(STATUS "Looking for wolfSSL")
-find_library(LIBRARY_WOLFSSL wolfssl)
-message(STATUS "Looking for wolfSSL - ${LIBRARY_WOLFSSL}")
-target_link_libraries(client ${LIBRARY_WOLFSSL})
-
 message(STATUS "Looking for z")
 find_library(LIBRARY_Z z)
 message(STATUS "Looking for z - ${LIBRARY_Z}")

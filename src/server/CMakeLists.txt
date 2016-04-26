@@ -16,8 +16,3 @@ add_executable(server ${SERVER_FILES})
 
 add_dependencies(server common)
 target_link_libraries(server common)
-
-# find threads
-#find_package(threads)
-#target_link_libraries(server ${CMAKE_THREAD_LIBS_INIT})
-target_link_libraries(server pthread)
