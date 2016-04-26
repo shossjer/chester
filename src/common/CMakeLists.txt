@@ -4,11 +4,18 @@ project(common)
 
 # source listing
 set(COMMON_SOURCE
-  network/initiate.cpp
+  dummy.cpp
   )
 # header listing
 set(COMMON_HEADER
-  network/initiate.hpp
+  Code.hpp
+  Header.hpp
+  Reader.hpp
+  Serializer.hpp
+  Structurer.hpp
+  Writer.hpp
+  messages.hpp
+  network/byte_order.hpp
   )
 
 set(COMMON_FILES ${COMMON_SOURCE} ${COMMON_HEADER})
