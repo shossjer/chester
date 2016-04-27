@@ -306,7 +306,7 @@ int run_open(const int argc, const char *const argv[])
 	{
 		codes.emplace_back();
 		if (!compute_hash_of_file(resource.first, codes.back()))
-			return -1;
+			codes.back() = chester::common::Code::null();
 	}
 
 	// the stash contains a list of resources ready to be pushed
@@ -343,21 +343,24 @@ int run_open(const int argc, const char *const argv[])
 		std::cout << resource.first
 		          << padding;
 
-		if (!resource.second.empty() &&
-		    chester::utility::from_string<chester::common::Code>(resource.second) == code)
+		if (!resource.second.empty())
 		{
-			std::cout << "up to date\n";
-			status = status_up_to_date;
-			continue;
-		}
-		const auto filename = chester::utility::to_string(".chester.d/resources/", code);
-		{
-			std::ifstream file(filename);
-			if (file)
+			const auto codee = chester::utility::from_string<chester::common::Code>(resource.second);
+			if (code == codee)
 			{
-				std::cout << "found\n";
-				status = status_found;
+				std::cout << "up to date\n";
+				status = status_up_to_date;
 				continue;
+			}
+			const auto filename = chester::utility::to_string(".chester.d/resources/", codee);
+			{
+				std::ifstream file(filename);
+				if (file)
+				{
+					std::cout << "found\n";
+					status = status_found;
+					continue;
+				}
 			}
 		}
 		std::cout << "missing\n";
@@ -369,20 +372,22 @@ int run_open(const int argc, const char *const argv[])
 	for (std::size_t i = 0; i < resources.size(); i++)
 	{
 		auto && resource = resources[i];
-		auto && code = codes[i];
+		//auto && code = codes[i];
 		auto && status = statuses[i];
 
 		if (status != status_found)
 			continue;
 
+		const auto codee = chester::utility::from_string<chester::common::Code>(resource.second);
+
 		const auto padding = std::string(column - resource.first.size(), ' ');
 		std::cout << resource.first
 		          << padding
-		          << code
+		          << codee
 		          << "\n";
 
 		// open input/output files
-		const auto ifilename = chester::utility::to_string(".chester.d/resources/", code);
+		const auto ifilename = chester::utility::to_string(".chester.d/resources/", codee);
 		std::ifstream ifile(ifilename);
 		if (!ifile)
 		{
@@ -589,7 +594,6 @@ int run_push(const int argc, const char *const argv[])
 
 		reader(header, sizeof(chester::common::Header));
 		debug_assert(header.id == chester::common::msg::id_of<chester::common::msg::ping_t>::value);
-		std::cout << "got back a ping\n";
 	}
 	// -----------------
 	close( read_pipe[ read_end]);
