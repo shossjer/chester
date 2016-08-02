@@ -32,6 +32,7 @@ int print_usage()
 	std::cout << "  pull   fetch followed by open\n";
 	std::cout << "  push   transfers any stashed files to the remote\n";
 	std::cout << "  stash  scans chester.txt for files to compress and store locally\n";
+	std::cout << "  status displays the status of chester.txt\n";
 	//std::cout << "  sync   push followed by pull\n";
 
 	return 0;
@@ -820,6 +821,183 @@ int run_stash(const int argc, const char *const argv[])
 	return 0;
 }
 
+int run_status(const int argc, const char *const argv[])
+{
+	// each resource consists of a filename followed by an optional code
+	std::vector<std::pair<std::string, std::string>> resources;
+	{
+		// read chester.txt
+		std::ifstream ifile("chester.txt");
+		if (!ifile)
+		{
+			std::cerr << "cannot open \"chester.txt\" for reading\n";
+			return -1;
+		}
+
+		std::vector<std::string> lines;
+		chester::utility::split(ifile, '\n', lines, true);
+		std::vector<std::string> words;
+		for (auto && line : lines)
+		{
+			words.clear();
+			chester::utility::split(line, ' ', words, true);
+
+			switch (words.size())
+			{
+			case 0:
+				continue;
+			case 1:
+				resources.emplace_back(words[0], "");
+				break;
+			case 2:
+				resources.emplace_back(words[0], words[1]);
+				break;
+			default:
+				std::cerr << "unexpected number of words in \"chester.txt\" at line ?\n";
+				return -1;
+			}
+		}
+	}
+	// find column width
+	std::size_t column = 0;
+	for (auto && resource : resources)
+		column = std::max(column, resource.first.size());
+	column += 1; // minimum amount of space between the columns
+
+	//
+	std::vector<chester::common::Code> codes;
+	codes.reserve(resources.size());
+	for (auto && resource : resources)
+	{
+		codes.emplace_back();
+		if (!compute_hash_of_file(resource.first, codes.back()))
+			codes.back() = chester::common::Code::null();
+	}
+	// the stash contains a list of resources ready to be pushed
+	std::vector<chester::common::Code> stash;
+	{
+		// read stash
+		std::ifstream ifile(".chester.d/stash");
+		if (ifile)
+		{
+			std::vector<std::string> lines;
+			chester::utility::split(ifile, '\n', lines, true);
+			stash.reserve(lines.size());
+			for (auto && line : lines)
+			{
+				stash.emplace_back();
+				chester::utility::from_string(line, stash.back());
+			}
+		}
+	}
+
+	// validate
+	// std::cout << "validating...\n";
+	std::vector<int> statuses(resources.size());
+	// constexpr int status_ = 0;
+	constexpr int status_up_to_date = 1;
+	constexpr int status_found = 2;
+	constexpr int status_missing = 3;
+	constexpr int status_stashed = 4;
+	constexpr int status_needs_restash = 5;
+	constexpr int status_new = 6;
+	constexpr int status_lost = 7;
+	constexpr int status_edited = 8;
+	for (std::size_t i = 0; i < resources.size(); i++)
+	{
+		auto && resource = resources[i];
+		auto && code = codes[i];
+		auto && status = statuses[i];
+
+		const auto padding = std::string(column - resource.first.size(), ' ');
+		std::cout << resource.first
+		          << padding;
+
+		if (code == chester::common::Code::null())
+		{
+			if (resource.second.empty())
+			{
+				std::cout << "lost\n";
+				status = status_lost;
+				continue;
+			}
+			{
+				const auto filename = chester::utility::to_string(".chester.d/resources/", chester::utility::from_string<chester::common::Code>(resource.second));
+				std::ifstream file(filename);
+				if (file)
+				{
+					std::cout << "found (use 'open' to inflate)\n";
+					status = status_found;
+					continue;
+				}
+			}
+			std::cout << "missing (use 'fetch' to check with repo)\n";
+			status = status_missing;
+			continue;
+		}
+		if (std::find(stash.begin(), stash.end(), code) != stash.end())
+		{
+			if (resource.second.empty())
+			{
+				std::cout << "needs restash\n";
+				status = status_needs_restash;
+				continue;
+			}
+			if (code == chester::utility::from_string<chester::common::Code>(resource.second))
+			{
+				std::cout << "stashed\n";
+				status = status_stashed;
+				continue;
+			}
+			std::cout << "needs restash?\n";
+			status = status_needs_restash;
+			continue;
+		}
+		{
+			const auto filename = chester::utility::to_string(".chester.d/resources/", code);
+			std::ifstream file(filename);
+			if (file)
+			{
+				if (resource.second.empty())
+				{
+					std::cout << "needs restash??\n";
+					status = status_needs_restash;
+					continue;
+				}
+				if (code == chester::utility::from_string<chester::common::Code>(resource.second))
+				{
+					std::cout << "up to date\n";
+					status = status_up_to_date;
+					continue;
+				}
+				std::cout << "needs restash???\n";
+				status = status_needs_restash;
+				continue;
+			}
+		}
+		if (resource.second.empty())
+		{
+			std::cout << "new\n";
+			status = status_new;
+			continue;
+		}
+		{
+			const auto filename = chester::utility::to_string(".chester.d/resources/", chester::utility::from_string<chester::common::Code>(resource.second));
+			std::ifstream file(filename);
+			if (file)
+			{
+				std::cout << "edited\n";
+				status = status_edited;
+				continue;
+			}
+		}
+		std::cout << "edited?\n";
+		status = status_edited;
+		continue;
+	}
+	return 0;
+}
+
 int main(const int argc, const char *const argv[])
 {
 	if (argc <= 1)
@@ -835,6 +1013,8 @@ int main(const int argc, const char *const argv[])
 		return run_push(argc, argv);
 	if (std::string("stash") == argv[1])
 		return run_stash(argc, argv);
+	if (std::string("status") == argv[1])
+		return run_status(argc, argv);
 
 	return 0;
 }
