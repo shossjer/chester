@@ -14,7 +14,4 @@
 
 /**
  */
-#define NETWORK_USE_SOCKET 1
-/**
- */
-/*#define NETWORK_USE_WINSOCK2 1*/
+#cmakedefine CLIENT_IS_WIN32 1

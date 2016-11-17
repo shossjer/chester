@@ -75,13 +75,22 @@ namespace chester
 
 			friend std::ostream & operator << (std::ostream & stream, const this_type & code)
 			{
+				const auto oldflags = stream.flags();
+				stream.setf(std::ios_base::hex, std::ios_base::basefield);
+				const auto oldfill = stream.fill();
+				stream.fill('0');
+				
 				for (auto && byte : code.bytes)
 				{
-					stream << std::hex
-					       << std::setw(2)
-					       << std::setfill('0')
-					       << int(byte);
+					// stream << std::hex
+					//        << std::setw(2)
+					//        << std::setfill('0')
+					//        << int(byte);
+					stream << std::setw(2) << int(byte);
 				}
+				stream.fill(oldfill);
+				stream.flags(oldflags);
+				
 				return stream;
 			}
 			friend std::istream & operator >> (std::istream & stream, this_type & code)

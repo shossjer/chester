@@ -2,6 +2,8 @@
  * This file is offensive, contains huge amounts of copy pasta and
  * should not be viewed by anyone.
  */
+#include <config.h>
+
 #include <common/Code.hpp>
 #include <common/Header.hpp>
 #include <common/Reader.hpp>
@@ -19,6 +21,132 @@
 #include <sstream>
 #include <string>
 #include <vector>
+
+#if CLIENT_IS_WIN32
+# include <windows.h>
+#endif
+
+#if CLIENT_IS_WIN32
+class Channel
+{
+private:
+	static constexpr auto  read_end = 0;
+	static constexpr auto write_end = 1;
+
+	HANDLE  read_pipe[2];
+	HANDLE write_pipe[2];
+
+public:
+	~Channel()
+	{
+		CloseHandle( read_pipe[ read_end]);
+		CloseHandle(write_pipe[write_end]);
+	}
+	Channel(const char * ipaddress, uint16_t portno)
+	{
+		SECURITY_ATTRIBUTES saAttr;
+		saAttr.nLength = sizeof(SECURITY_ATTRIBUTES);
+		saAttr.bInheritHandle = TRUE;
+		saAttr.lpSecurityDescriptor = NULL;
+
+		CreatePipe(& read_pipe[read_end], & read_pipe[write_end], &saAttr, 0);
+		CreatePipe(&write_pipe[read_end], &write_pipe[write_end], &saAttr, 0);
+
+		SetHandleInformation( read_pipe[ read_end], HANDLE_FLAG_INHERIT, 0);
+		SetHandleInformation(write_pipe[write_end], HANDLE_FLAG_INHERIT, 0);
+
+		const auto arg_port = chester::utility::to_string("-p", portno);
+		const auto arg_host = chester::utility::to_string("chester@", ipaddress);
+
+		const auto command_line = chester::utility::to_string("ssh", " ", arg_port, " ", arg_host, " ", "./server");
+
+		PROCESS_INFORMATION piProcInfo;
+		ZeroMemory(&piProcInfo, sizeof(PROCESS_INFORMATION));
+
+		STARTUPINFO siStartInfo;
+		ZeroMemory(&siStartInfo, sizeof(STARTUPINFO));
+		siStartInfo.cb = sizeof(STARTUPINFO);
+		// siStartInfo.hStdError = read_pipe[write_end];
+		siStartInfo.hStdOutput = read_pipe[write_end];
+		siStartInfo.hStdInput = write_pipe[read_end];
+		siStartInfo.dwFlags |= STARTF_USESTDHANDLES;
+
+		const auto ret = CreateProcess(NULL, const_cast<char *>(command_line.c_str()), NULL, NULL, TRUE, 0, NULL, NULL, &siStartInfo, &piProcInfo);
+		debug_printline("LAST ERROR: ", GetLastError());
+		debug_assert(ret);
+
+		CloseHandle(piProcInfo.hProcess);
+		CloseHandle(piProcInfo.hThread);
+	}
+
+public:
+	HANDLE get_read() const
+	{
+		return read_pipe[read_end];
+	}
+	HANDLE get_write() const
+	{
+		return write_pipe[write_end];
+	}
+};
+#else
+class Channel
+{
+private:
+	static constexpr auto  read_end = 0;
+	static constexpr auto write_end = 1;
+
+	int  read_pipe[2];
+	int write_pipe[2];
+
+public:
+	~Channel()
+	{
+		close( read_pipe[ read_end]);
+		close(write_pipe[write_end]);
+	}
+	Channel(const char * ipaddress, uint16_t portno)
+	{
+		pipe( read_pipe);
+		pipe(write_pipe);
+
+		const auto pid = fork();
+		if (pid == 0) // child
+		{
+			dup2(write_pipe[ read_end],  STDIN_FILENO); // read from write
+			dup2( read_pipe[write_end], STDOUT_FILENO); // write to read
+
+			close( read_pipe[ read_end]);
+			close( read_pipe[write_end]);
+			close(write_pipe[ read_end]);
+			close(write_pipe[write_end]);
+
+			close(STDERR_FILENO);
+
+			const auto arg_port = chester::utility::to_string("-p", portno);
+			const auto arg_host = chester::utility::to_string("chester@", ipaddress);
+
+			execlp("ssh", "ssh", arg_port.c_str(), arg_host.c_str(), "./server", (char *)nullptr);
+
+			debug_assert(false);
+		}
+		debug_assert(pid != -1);
+
+		close( read_pipe[write_end]);
+		close(write_pipe[ read_end]);
+	}
+
+public:
+	int get_read() const
+	{
+		return read_pipe[read_end];
+	}
+	int get_write() const
+	{
+		return write_pipe[write_end];
+	}
+};
+#endif
 
 int print_usage()
 {
@@ -164,40 +292,9 @@ int run_fetch(const int argc, const char *const argv[])
 	if (query.codes.empty())
 		return 0;
 
-	const auto  read_end = 0;
-	const auto write_end = 1;
-	int  read_pipe[2];
-	int write_pipe[2];
-	pipe( read_pipe);
-	pipe(write_pipe);
-
-	const auto pid = fork();
-	if (pid == 0) // child
-	{
-		dup2(write_pipe[ read_end],  STDIN_FILENO); // read from write
-		dup2( read_pipe[write_end], STDOUT_FILENO); // write to read
-
-		close( read_pipe[ read_end]);
-		close( read_pipe[write_end]);
-		close(write_pipe[ read_end]);
-		close(write_pipe[write_end]);
-
-		close(STDERR_FILENO);
-
-		const auto arg_port = chester::utility::to_string("-p", portno);
-		const auto arg_host = chester::utility::to_string("chester@", ipaddress);
-
-		execlp("ssh", "ssh", arg_port.c_str(), arg_host.c_str(), "./server", (char *)nullptr);
-
-		debug_assert(false);
-	}
-	debug_assert(pid != -1);
-
-	close( read_pipe[write_end]);
-	close(write_pipe[ read_end]);
-
-	chester::common::Writer writer(write_pipe[write_end]);
-	chester::common::Reader reader( read_pipe[ read_end]);
+	Channel channel{ipaddress.c_str(), portno};
+	chester::common::Writer writer(channel.get_write());
+	chester::common::Reader reader(channel.get_read());
 
 	chester::common::Header header;
 	reader(header, sizeof(chester::common::Header));
@@ -251,10 +348,6 @@ int run_fetch(const int argc, const char *const argv[])
 			count += amount;
 		}
 	}
-	// -----------------
-	close( read_pipe[ read_end]);
-	close(write_pipe[write_end]);
-
 	return 0;
 }
 
@@ -305,6 +398,7 @@ int run_open(const int argc, const char *const argv[])
 	codes.reserve(resources.size());
 	for (auto && resource : resources)
 	{
+		// std::cout << "computing hash..." << std::endl;
 		codes.emplace_back();
 		if (!compute_hash_of_file(resource.first, codes.back()))
 			codes.back() = chester::common::Code::null();
@@ -330,6 +424,7 @@ int run_open(const int argc, const char *const argv[])
 
 	// validate
 	std::cout << "validating...\n";
+	std::cout << std::flush;
 	std::vector<int> statuses(resources.size());
 	constexpr int status_up_to_date = 0;
 	constexpr int status_found = 1;
@@ -343,6 +438,7 @@ int run_open(const int argc, const char *const argv[])
 		const auto padding = std::string(column - resource.first.size(), ' ');
 		std::cout << resource.first
 		          << padding;
+		std::cout << std::flush;
 
 		if (!resource.second.empty())
 		{
@@ -350,6 +446,7 @@ int run_open(const int argc, const char *const argv[])
 			if (code == codee)
 			{
 				std::cout << "up to date\n";
+				std::cout << std::flush;
 				status = status_up_to_date;
 				continue;
 			}
@@ -359,17 +456,20 @@ int run_open(const int argc, const char *const argv[])
 				if (file)
 				{
 					std::cout << "found\n";
+					std::cout << std::flush;
 					status = status_found;
 					continue;
 				}
 			}
 		}
 		std::cout << "missing\n";
+		std::cout << std::flush;
 		status = status_missing;
 	}
 
 	// decompress
 	std::cout << "decompressing...\n";
+	std::cout << std::flush;
 	for (std::size_t i = 0; i < resources.size(); i++)
 	{
 		auto && resource = resources[i];
@@ -386,10 +486,11 @@ int run_open(const int argc, const char *const argv[])
 		          << padding
 		          << codee
 		          << "\n";
+		std::cout << std::flush;
 
 		// open input/output files
 		const auto ifilename = chester::utility::to_string(".chester.d/resources/", codee);
-		std::ifstream ifile(ifilename);
+		std::ifstream ifile(ifilename, std::ifstream::binary);
 		if (!ifile)
 		{
 			std::cerr << "cannot open \""
@@ -500,40 +601,9 @@ int run_push(const int argc, const char *const argv[])
 	}
 	debug_assert(!stash.codes.empty());
 
-	const auto  read_end = 0;
-	const auto write_end = 1;
-	int  read_pipe[2];
-	int write_pipe[2];
-	pipe( read_pipe);
-	pipe(write_pipe);
-
-	const auto pid = fork();
-	if (pid == 0) // child
-	{
-		dup2(write_pipe[ read_end],  STDIN_FILENO); // read from write
-		dup2( read_pipe[write_end], STDOUT_FILENO); // write to read
-
-		close( read_pipe[ read_end]);
-		close( read_pipe[write_end]);
-		close(write_pipe[ read_end]);
-		close(write_pipe[write_end]);
-
-		close(STDERR_FILENO);
-
-		const auto arg_port = chester::utility::to_string("-p", portno);
-		const auto arg_host = chester::utility::to_string("chester@", ipaddress);
-
-		execlp("ssh", "ssh", arg_port.c_str(), arg_host.c_str(), "./server", (char *)nullptr);
-
-		debug_assert(false);
-	}
-	debug_assert(pid != -1);
-
-	close( read_pipe[write_end]);
-	close(write_pipe[ read_end]);
-
-	chester::common::Writer writer(write_pipe[write_end]);
-	chester::common::Reader reader( read_pipe[ read_end]);
+	Channel channel{ipaddress.c_str(), portno};
+	chester::common::Writer writer(channel.get_write());
+	chester::common::Reader reader(channel.get_read());
 
 	chester::common::Header header;
 	reader(header, sizeof(chester::common::Header));
@@ -596,10 +666,6 @@ int run_push(const int argc, const char *const argv[])
 		reader(header, sizeof(chester::common::Header));
 		debug_assert(header.id == chester::common::msg::id_of<chester::common::msg::ping_t>::value);
 	}
-	// -----------------
-	close( read_pipe[ read_end]);
-	close(write_pipe[write_end]);
-
 	// update stash
 	debug_printline("updating \".chester.d/stash\"...");
 	// assume everything went fine and remove it
@@ -972,6 +1038,9 @@ int run_status(const int argc, const char *const argv[])
 				}
 				std::cout << "needs restash???\n";
 				status = status_needs_restash;
+				std::cout << " (resource = " << resource.second << "\n";
+				std::cout << "           = " << chester::utility::from_string<chester::common::Code>(resource.second) << "\n";
+				std::cout << "  code     = " << code << "\n)";
 				continue;
 			}
 		}
