@@ -148,6 +148,17 @@ public:
 };
 #endif
 
+namespace
+{
+	bool file_exists(const std::string & filename)
+	{
+		std::ifstream file(filename);
+		if (file)
+			return true;
+		return false;
+	}
+}
+
 int print_usage()
 {
 	std::cout << "usage: chester <command>\n";
@@ -280,12 +291,8 @@ int run_fetch(const int argc, const char *const argv[])
 			continue;
 
 		const auto code = chester::utility::from_string<chester::common::Code>(resource.second);
-		const auto filename = chester::utility::to_string(".chester.d/resource/", code);
-		{
-			std::ifstream ifile(filename);
-			if (ifile)
-				continue;
-		}
+		if (file_exists(chester::utility::to_string(".chester.d/resources/", code)))
+			continue;
 
 		query.codes.push_back(code);
 	}
@@ -450,16 +457,12 @@ int run_open(const int argc, const char *const argv[])
 				status = status_up_to_date;
 				continue;
 			}
-			const auto filename = chester::utility::to_string(".chester.d/resources/", codee);
+			if (file_exists(chester::utility::to_string(".chester.d/resources/", codee)))
 			{
-				std::ifstream file(filename);
-				if (file)
-				{
-					std::cout << "found\n";
-					std::cout << std::flush;
-					status = status_found;
-					continue;
-				}
+				std::cout << "found\n";
+				std::cout << std::flush;
+				status = status_found;
+				continue;
 			}
 		}
 		std::cout << "missing\n";
@@ -775,15 +778,12 @@ int run_stash(const int argc, const char *const argv[])
 			status = status_up_to_date;
 			continue;
 		}
+		if (file_exists(chester::utility::concat(".chester.d/resources/", hash_code)))
 		{
-			std::ifstream ofile(chester::utility::concat(".chester.d/resources/", hash_code));
-			if (ofile)
-			{
-				std::cout << "COLLISION!\n";
-				status = status_collision;
-				panicing = true;
-				continue;
-			}
+			std::cout << "COLLISION!\n";
+			status = status_collision;
+			panicing = true;
+			continue;
 		}
 		std::cout << hash_code
 		          << "\n";
@@ -823,7 +823,7 @@ int run_stash(const int argc, const char *const argv[])
 
 		const auto ofilename = chester::utility::concat(".chester.d/resources/", hash_code);
 		// open input/output files
-		std::ofstream ofile(ofilename);
+		std::ofstream ofile(ofilename, std::ifstream::binary);
 		if (!ofile)
 		{
 			std::cerr << "cannot open \""
@@ -969,6 +969,7 @@ int run_status(const int argc, const char *const argv[])
 	constexpr int status_new = 6;
 	constexpr int status_lost = 7;
 	constexpr int status_edited = 8;
+	constexpr int status_outdated = 9;
 	for (std::size_t i = 0; i < resources.size(); i++)
 	{
 		auto && resource = resources[i];
@@ -987,15 +988,17 @@ int run_status(const int argc, const char *const argv[])
 				status = status_lost;
 				continue;
 			}
+			if (std::find(stash.begin(), stash.end(), chester::utility::from_string<chester::common::Code>(resource.second)) != stash.end())
 			{
-				const auto filename = chester::utility::to_string(".chester.d/resources/", chester::utility::from_string<chester::common::Code>(resource.second));
-				std::ifstream file(filename);
-				if (file)
-				{
-					std::cout << "found (use 'open' to inflate)\n";
-					status = status_found;
-					continue;
-				}
+				std::cout << "lost?\n";
+				status = status_lost;
+				continue;
+			}
+			if (file_exists(chester::utility::to_string(".chester.d/resources/", chester::utility::from_string<chester::common::Code>(resource.second))))
+			{
+				std::cout << "found (use 'open' to inflate)\n";
+				status = status_found;
+				continue;
 			}
 			std::cout << "missing (use 'fetch' to check with repo)\n";
 			status = status_missing;
@@ -1011,7 +1014,7 @@ int run_status(const int argc, const char *const argv[])
 			}
 			if (code == chester::utility::from_string<chester::common::Code>(resource.second))
 			{
-				std::cout << "stashed\n";
+				std::cout << "stashed (use 'push' to sync with repo)\n";
 				status = status_stashed;
 				continue;
 			}
@@ -1019,46 +1022,41 @@ int run_status(const int argc, const char *const argv[])
 			status = status_needs_restash;
 			continue;
 		}
+		if (file_exists(chester::utility::to_string(".chester.d/resources/", code)))
 		{
-			const auto filename = chester::utility::to_string(".chester.d/resources/", code);
-			std::ifstream file(filename);
-			if (file)
+			if (resource.second.empty())
 			{
-				if (resource.second.empty())
-				{
-					std::cout << "needs restash??\n";
-					status = status_needs_restash;
-					continue;
-				}
-				if (code == chester::utility::from_string<chester::common::Code>(resource.second))
-				{
-					std::cout << "up to date\n";
-					status = status_up_to_date;
-					continue;
-				}
-				std::cout << "needs restash???\n";
+				std::cout << "needs restash??\n";
 				status = status_needs_restash;
-				std::cout << " (resource = " << resource.second << "\n";
-				std::cout << "           = " << chester::utility::from_string<chester::common::Code>(resource.second) << "\n";
-				std::cout << "  code     = " << code << "\n)";
 				continue;
 			}
+			if (code == chester::utility::from_string<chester::common::Code>(resource.second))
+			{
+				std::cout << "up to date\n";
+				status = status_up_to_date;
+				continue;
+			}
+			if (file_exists(chester::utility::to_string(".chester.d/resources/", resource.second)))
+			{
+				std::cout << "outdated (use 'open' to inflate)\n";
+				status = status_outdated;
+				continue;
+			}
+			std::cout << "missing (use 'fetch' to check with repo)\n";
+			status = status_missing;
+			continue;
 		}
 		if (resource.second.empty())
 		{
-			std::cout << "new\n";
+			std::cout << "new (use 'stash' to deflate)\n";
 			status = status_new;
 			continue;
 		}
+		if (file_exists(chester::utility::to_string(".chester.d/resources/", chester::utility::from_string<chester::common::Code>(resource.second))))
 		{
-			const auto filename = chester::utility::to_string(".chester.d/resources/", chester::utility::from_string<chester::common::Code>(resource.second));
-			std::ifstream file(filename);
-			if (file)
-			{
-				std::cout << "edited\n";
-				status = status_edited;
-				continue;
-			}
+			std::cout << "edited (use 'stash' to deflate)\n";
+			status = status_edited;
+			continue;
 		}
 		std::cout << "edited?\n";
 		status = status_edited;
