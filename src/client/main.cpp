@@ -720,12 +720,12 @@ int run_stash(const int argc, const char *const argv[])
 		column = std::max(column, resource.first.size());
 	column += 1; // minimum amount of space between the columns
 	// compute hash codes
-	std::vector<chester::common::Code> hash_codes;
-	hash_codes.reserve(resources.size());
+	std::vector<chester::common::Code> codes;
+	codes.reserve(resources.size());
 	for (auto && resource : resources)
 	{
-		hash_codes.emplace_back();
-		if (!compute_hash_of_file(resource.first, hash_codes.back()))
+		codes.emplace_back();
+		if (!compute_hash_of_file(resource.first, codes.back()))
 			return -1;
 	}
 
@@ -754,38 +754,52 @@ int run_stash(const int argc, const char *const argv[])
 	constexpr int status_stashed = 1;
 	constexpr int status_collision = 2;
 	constexpr int status_new = 3;
+	constexpr int status_copy = 4;
+	constexpr int status_duplicate = 5;
 	bool panicing = false;
 	for (std::size_t i = 0; i < resources.size(); i++)
 	{
 		auto && resource = resources[i];
-		auto && hash_code = hash_codes[i];
+		auto && code = codes[i];
 		auto && status = statuses[i];
 
 		const auto padding = std::string(column - resource.first.size(), ' ');
 		std::cout << resource.first
 		          << padding;
 
-		if (std::find(std::begin(stash), std::end(stash), hash_code) != std::end(stash))
+		if (std::find(std::begin(stash), std::end(stash), code) != std::end(stash))
 		{
 			std::cout << "stashed\n";
 			status = status_stashed;
 			continue;
 		}
 		if (!resource.second.empty() &&
-		    chester::utility::from_string<chester::common::Code>(resource.second) == hash_code)
+		    chester::utility::from_string<chester::common::Code>(resource.second) == code)
 		{
 			std::cout << "up to date\n";
 			status = status_up_to_date;
 			continue;
 		}
-		if (file_exists(chester::utility::concat(".chester.d/resources/", hash_code)))
+		if (file_exists(chester::utility::to_string(".chester.d/resources/", code)))
 		{
+			if (resource.second.empty())
+			{
+				std::cout << "copy\n";
+				status = status_copy;
+				continue;
+			}
 			std::cout << "COLLISION!\n";
 			status = status_collision;
 			panicing = true;
 			continue;
 		}
-		std::cout << hash_code
+		if (std::count(codes.data(), codes.data() + i, code))
+		{
+			std::cout << "duplicate of " << resources[std::distance(codes.data(), std::find(codes.data(), codes.data() + i, code))].first << "\n";
+			status = status_duplicate;
+			continue;
+		}
+		std::cout << code
 		          << "\n";
 		status = status_new;
 	}
@@ -809,7 +823,7 @@ int run_stash(const int argc, const char *const argv[])
 	for (std::size_t i = 0; i < resources.size(); i++)
 	{
 		auto && resource = resources[i];
-		auto && hash_code = hash_codes[i];
+		auto && code = codes[i];
 		auto && status = statuses[i];
 
 		if (status != status_new)
@@ -818,10 +832,10 @@ int run_stash(const int argc, const char *const argv[])
 		const auto padding = std::string(column - resource.first.size(), ' ');
 		std::cout << resource.first
 		          << padding
-		          << hash_code
+		          << code
 		          << "\n";
 
-		const auto ofilename = chester::utility::concat(".chester.d/resources/", hash_code);
+		const auto ofilename = chester::utility::concat(".chester.d/resources/", code);
 		// open input/output files
 		std::ofstream ofile(ofilename, std::ifstream::binary);
 		if (!ofile)
@@ -861,7 +875,7 @@ int run_stash(const int argc, const char *const argv[])
 		while (!ifile.eof());
 
 		// update stash
-		ostash << hash_code
+		ostash << code
 		       << "\n";
 	}
 	ostash.close();
@@ -876,11 +890,11 @@ int run_stash(const int argc, const char *const argv[])
 	for (std::size_t i = 0; i < resources.size(); i++)
 	{
 		auto && resource = resources[i];
-		auto && hash_code = hash_codes[i];
+		auto && code = codes[i];
 
 		ofile << resource.first
 		      << std::string(column - resource.first.size(), ' ')
-		      << hash_code
+		      << code
 		      << "\n";
 	}
 
@@ -970,6 +984,8 @@ int run_status(const int argc, const char *const argv[])
 	constexpr int status_lost = 7;
 	constexpr int status_edited = 8;
 	constexpr int status_outdated = 9;
+	constexpr int status_copy = 10;
+	constexpr int status_duplicate = 11;
 	for (std::size_t i = 0; i < resources.size(); i++)
 	{
 		auto && resource = resources[i];
@@ -1018,6 +1034,12 @@ int run_status(const int argc, const char *const argv[])
 				status = status_stashed;
 				continue;
 			}
+			if (file_exists(chester::utility::to_string(".chester.d/resources/", chester::utility::from_string<chester::common::Code>(resource.second))))
+			{
+				std::cout << "copy (use 'stash' to update listing)\n";
+				status = status_copy;
+				continue;
+			}
 			std::cout << "needs restash?\n";
 			status = status_needs_restash;
 			continue;
@@ -1026,8 +1048,12 @@ int run_status(const int argc, const char *const argv[])
 		{
 			if (resource.second.empty())
 			{
-				std::cout << "needs restash??\n";
-				status = status_needs_restash;
+				// the file is either
+				// 1. a copy of a previously stashed file, or
+				// 2. a new file causing a conflict
+				// we assume that the second case will never happen
+				std::cout << "copy? (use 'stash' to update listing)\n";
+				status = status_copy;
 				continue;
 			}
 			if (code == chester::utility::from_string<chester::common::Code>(resource.second))
@@ -1044,6 +1070,16 @@ int run_status(const int argc, const char *const argv[])
 			}
 			std::cout << "missing (use 'fetch' to check with repo)\n";
 			status = status_missing;
+			continue;
+		}
+		if (std::count(codes.data(), codes.data() + i, code))
+		{
+			// the file is either
+			// 1. a copy of a previously stashed file, or
+			// 2. a new file causing a conflict
+			// we assume that the second case will never happen
+			std::cout << "duplicate of " << resources[std::distance(codes.data(), std::find(codes.data(), codes.data() + i, code))].first << "\n";
+			status = status_duplicate;
 			continue;
 		}
 		if (resource.second.empty())
